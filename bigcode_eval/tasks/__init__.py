@@ -2,10 +2,10 @@ import inspect
 from pprint import pprint
 
 from . import (apps, codexglue_code_to_text, codexglue_text_to_text, conala,
-               concode, ds1000, gsm, humaneval, humanevalplus, humanevalpack,
+               concode, gsm, humaneval, humanevalplus, humanevalpack,
                instruct_humaneval, instruct_wizard_humaneval, mbpp, mbppplus,
                multiple, parity, python_bugs, quixbugs, recode, santacoder_fim,
-               studenteval, mercury)
+               studenteval, mercury,human_eval_dis)
 
 TASK_REGISTRY = {
     **apps.create_all_tasks(),
@@ -15,7 +15,6 @@ TASK_REGISTRY = {
     "codexglue_code_to_text-python-left": codexglue_code_to_text.LeftCodeToText,
     "conala": conala.Conala,
     "concode": concode.Concode,
-    **ds1000.create_all_tasks(),
     **humaneval.create_all_tasks(),
     **humanevalplus.create_all_tasks(),
     **humanevalpack.create_all_tasks(),
@@ -31,6 +30,7 @@ TASK_REGISTRY = {
     **santacoder_fim.create_all_tasks(),
     "studenteval": studenteval.StudentEval,
     "mercury": mercury.Mercury,
+    "human_eval_dis": human_eval_dis.create_all_tasks(),
 }
 
 ALL_TASKS = sorted(list(TASK_REGISTRY))
@@ -39,6 +39,9 @@ ALL_TASKS = sorted(list(TASK_REGISTRY))
 def get_task(task_name, args=None):
     try:
         kwargs = {}
+        print(task_name)
+        print(args)
+        print(TASK_REGISTRY[task_name])
         if "prompt" in inspect.signature(TASK_REGISTRY[task_name]).parameters:
             kwargs["prompt"] = args.prompt
         if "load_data_path" in inspect.signature(TASK_REGISTRY[task_name]).parameters:

@@ -1,4 +1,4 @@
-import fcntl
+import msvcrt
 import os
 import signal
 import subprocess
@@ -23,9 +23,9 @@ class Result:
 
 
 def set_nonblocking(reader):
-    fd = reader.fileno()
-    fl = fcntl.fcntl(fd, fcntl.F_GETFL)
-    fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+    """Su Windows, msvcrt.setmode può essere usato per evitare il buffering, ma non esiste un vero O_NONBLOCK."""
+    if reader is not None:
+        msvcrt.setmode(reader.fileno(), os.O_BINARY)
 
 
 def run(
@@ -35,9 +35,8 @@ def run(
     env=None,
 ) -> Result:
     """
-    Runs the given program with arguments. After the timeout elapses, kills the process
-    and all other processes in the process group. Captures at most max_output_size bytes
-    of stdout and stderr each, and discards any output beyond that.
+    Esegue il programma con i dati forniti. Dopo il timeout, termina il processo.
+    Cattura fino a max_output_size byte di stdout e stderr.
     """
     p = subprocess.Popen(
         args,
@@ -45,15 +44,13 @@ def run(
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        start_new_session=True,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,  # Necessario su Windows
         bufsize=MAX_BYTES_PER_READ,
     )
+
     set_nonblocking(p.stdout)
     set_nonblocking(p.stderr)
 
-    process_group_id = os.getpgid(p.pid)
-
-    # We sleep for 0.1 seconds in each iteration.
     max_iterations = timeout_seconds * 10
     stdout_saved_bytes = []
     stderr_saved_bytes = []
@@ -61,29 +58,39 @@ def run(
     stderr_bytes_read = 0
 
     for _ in range(max_iterations):
-        this_stdout_read = p.stdout.read(MAX_BYTES_PER_READ)
-        this_stderr_read = p.stderr.read(MAX_BYTES_PER_READ)
-        # this_stdout_read and this_stderr_read may be None if stdout or stderr
-        # are closed. Without these checks, test_close_output fails.
-        if this_stdout_read is not None and stdout_bytes_read < max_output_size:
+        if p.stdout:
+            this_stdout_read = p.stdout.read(MAX_BYTES_PER_READ)
+        else:
+            this_stdout_read = None
+        
+        if p.stderr:
+            this_stderr_read = p.stderr.read(MAX_BYTES_PER_READ)
+        else:
+            this_stderr_read = None
+
+        if this_stdout_read and stdout_bytes_read < max_output_size:
             stdout_saved_bytes.append(this_stdout_read)
             stdout_bytes_read += len(this_stdout_read)
-        if this_stderr_read is not None and stderr_bytes_read < max_output_size:
+        if this_stderr_read and stderr_bytes_read < max_output_size:
             stderr_saved_bytes.append(this_stderr_read)
             stderr_bytes_read += len(this_stderr_read)
+
         exit_code = p.poll()
         if exit_code is not None:
             break
         time.sleep(SLEEP_BETWEEN_READS)
 
-    try:
-        # Kills the process group. Without this line, test_fork_once fails.
-        os.killpg(process_group_id, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    if exit_code is None:
+        try:
+            p.send_signal(signal.CTRL_BREAK_EVENT)  # Segnale per Windows
+            time.sleep(1)  # Attendere la terminazione
+            p.terminate()  # Se ancora in esecuzione, termina il processo
+        except Exception:
+            pass
 
     timeout = exit_code is None
     exit_code = exit_code if exit_code is not None else -1
     stdout = b"".join(stdout_saved_bytes).decode("utf-8", errors="ignore")
     stderr = b"".join(stderr_saved_bytes).decode("utf-8", errors="ignore")
+    
     return Result(timeout=timeout, exit_code=exit_code, stdout=stdout, stderr=stderr)
